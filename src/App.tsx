@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import "./App.css";
 
 type RuleSlot = "X" | "Y" | "A" | "B";
 type PickerTab = "ipa" | "features" | "boundaries";
-type FeatureValue = "+" | "-" | "α" | "-α";
-type PlaceNode = "LABIAL" | "CORONAL" | "DORSAL" | "LARYNGEAL";
+type VariableFeatureValue = "α" | "-α" | "β" | "-β" | "γ" | "-γ";
+type FeatureValue = "+" | "-" | VariableFeatureValue;
+type PlaceNode = "LABIAL" | "CORONAL" | "DORSAL" | "PHARYNGEAL" | "RADICAL" | "LARYNGEAL";
 
 interface IpaItem {
   symbol: string;
@@ -28,8 +29,9 @@ interface SymbolToken {
 interface MatrixToken {
   id: string;
   kind: "matrix";
+  label: string;
   features: Record<string, FeatureValue>;
-  nodes: PlaceNode[];
+  nodes: string[];
 }
 
 interface BoundaryToken {
@@ -55,6 +57,55 @@ const EMPTY_RULE: RuleState = {
   A: [],
   B: [],
 };
+
+const UNARY_PLACE_FEATURES: PlaceNode[] = [
+  "LABIAL",
+  "CORONAL",
+  "DORSAL",
+  "PHARYNGEAL",
+  "RADICAL",
+  "LARYNGEAL",
+];
+
+const VARIABLE_FEATURE_VALUES: VariableFeatureValue[] = [
+  "α",
+  "-α",
+  "β",
+  "-β",
+  "γ",
+  "-γ",
+];
+
+const BASIC_FEATURE_NAMES = new Set<string>([
+  "syllabic",
+  "consonantal",
+  "sonorant",
+  "approximant",
+  "continuant",
+  "delayed release",
+  "nasal",
+  "lateral",
+  "strident",
+  "voice",
+  "spread glottis",
+  "constricted glottis",
+  "round",
+  "anterior",
+  "distributed",
+  "high",
+  "low",
+  "back",
+  "tense",
+]);
+
+function isVariableFeatureValue(
+  value: FeatureValue | undefined,
+): value is VariableFeatureValue {
+  return (
+    value !== undefined &&
+    (VARIABLE_FEATURE_VALUES as readonly string[]).includes(value)
+  );
+}
 
 const IPA_ITEMS: IpaItem[] = [
   // Pulmonic consonants
@@ -316,6 +367,7 @@ const FEATURES: FeatureDefinition[] = [
 ];
 
 const BOUNDARIES = [
+  { value: "", name: "blank position" },
   { value: "#", name: "word boundary" },
   { value: "+", name: "morpheme boundary" },
   { value: ".", name: "syllable boundary" },
@@ -326,6 +378,8 @@ const BOUNDARIES = [
   { value: "∅", name: "null segment" },
   { value: "C", name: "consonant variable" },
   { value: "V", name: "vowel variable" },
+  { value: "N", name: "N variable" },
+  { value: "S", name: "S variable" },
 ];
 
 
@@ -429,17 +483,86 @@ function cloneRule(rule: RuleState): RuleState {
   return JSON.parse(JSON.stringify(rule)) as RuleState;
 }
 
+function duplicateTokens(tokens: RuleToken[]): RuleToken[] {
+  return tokens.map((token) => {
+    if (token.kind === "matrix") {
+      return {
+        ...token,
+        id: createId(),
+        features: { ...token.features },
+        nodes: [...token.nodes],
+      };
+    }
+
+    return {
+      ...token,
+      id: createId(),
+    };
+  });
+}
+
 function loadSavedRule(): RuleState {
+  const normalizeTokens = (value: unknown): RuleToken[] => {
+    if (!Array.isArray(value)) return [];
+
+    return value.flatMap((token): RuleToken[] => {
+      if (!token || typeof token !== "object") return [];
+      const candidate = token as Record<string, unknown>;
+
+      if (candidate.kind === "matrix" && typeof candidate.id === "string") {
+        return [{
+          id: candidate.id,
+          kind: "matrix",
+          label: typeof candidate.label === "string" ? candidate.label : "",
+          nodes: Array.isArray(candidate.nodes)
+            ? candidate.nodes.filter((node): node is string => typeof node === "string")
+            : [],
+          features: candidate.features && typeof candidate.features === "object"
+            ? candidate.features as Record<string, FeatureValue>
+            : {},
+        }];
+      }
+
+      if (
+        candidate.kind === "symbol" &&
+        typeof candidate.id === "string" &&
+        typeof candidate.symbol === "string"
+      ) {
+        return [{
+          id: candidate.id,
+          kind: "symbol",
+          symbol: candidate.symbol,
+          name: typeof candidate.name === "string" ? candidate.name : "typed symbol",
+        }];
+      }
+
+      if (
+        candidate.kind === "boundary" &&
+        typeof candidate.id === "string" &&
+        typeof candidate.value === "string"
+      ) {
+        return [{
+          id: candidate.id,
+          kind: "boundary",
+          value: candidate.value,
+          name: typeof candidate.name === "string" ? candidate.name : "typed notation",
+        }];
+      }
+
+      return [];
+    });
+  };
+
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return cloneRule(EMPTY_RULE);
 
     const parsed = JSON.parse(saved) as Partial<RuleState>;
     return {
-      X: Array.isArray(parsed.X) ? parsed.X : [],
-      Y: Array.isArray(parsed.Y) ? parsed.Y : [],
-      A: Array.isArray(parsed.A) ? parsed.A : [],
-      B: Array.isArray(parsed.B) ? parsed.B : [],
+      X: normalizeTokens(parsed.X),
+      Y: normalizeTokens(parsed.Y),
+      A: normalizeTokens(parsed.A),
+      B: normalizeTokens(parsed.B),
     };
   } catch {
     return cloneRule(EMPTY_RULE);
@@ -450,12 +573,43 @@ function isStandaloneCombiningMark(text: string): boolean {
   return /^[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]+$/u.test(text);
 }
 
-function formatMatrixText(matrix: MatrixToken): string {
-  const lines = [
+function matrixRows(matrix: MatrixToken): string[] {
+  return [
     ...matrix.nodes,
     ...Object.entries(matrix.features).map(([name, value]) => `${value}${name}`),
   ];
-  return lines.length === 0 ? "[ ]" : `[${lines.join(", ")}]`;
+}
+
+function matrixToEditableText(matrix: MatrixToken): string {
+  return matrixRows(matrix).join("\n");
+}
+
+function parseMatrixText(value: string): Pick<MatrixToken, "nodes" | "features"> {
+  const nodes: string[] = [];
+  const features: Record<string, FeatureValue> = {};
+  const validValues = new Set<FeatureValue>(["+", "-", ...VARIABLE_FEATURE_VALUES]);
+
+  for (const rawLine of value.split(/\r?\n|,/u)) {
+    const line = rawLine.trim().replace(/^−/u, "-");
+    if (!line) continue;
+
+    const match = line.match(/^(-?[αβγ]|[+-])\s*(.+)$/u);
+    if (match && validValues.has(match[1] as FeatureValue)) {
+      const name = match[2].trim();
+      if (name) features[name] = match[1] as FeatureValue;
+      continue;
+    }
+
+    if (!nodes.includes(line)) nodes.push(line);
+  }
+
+  return { nodes, features };
+}
+
+function formatMatrixText(matrix: MatrixToken): string {
+  const lines = matrixRows(matrix);
+  const body = lines.length === 0 ? "[ ]" : `[${lines.join(", ")}]`;
+  return matrix.label.trim() ? `${matrix.label.trim()} ${body}` : body;
 }
 
 function formatTokenText(token: RuleToken): string {
@@ -465,7 +619,7 @@ function formatTokenText(token: RuleToken): string {
 }
 
 function formatSlotText(slot: RuleSlot, tokens: RuleToken[]): string {
-  if (tokens.length === 0) return "∅";
+  if (tokens.length === 0) return "";
 
   if (slot !== "X" && slot !== "Y") {
     return tokens.map(formatTokenText).join(" ");
@@ -559,27 +713,44 @@ function tipaSymbol(symbol: string): string {
 
 function latexMatrix(matrix: MatrixToken): string {
   const latexValue = (value: FeatureValue) => {
-    if (value === "α") return "\\alpha";
-    if (value === "-α") return "-\\alpha";
-    return value;
+    const variableMap: Record<"α" | "β" | "γ", string> = {
+      α: "\\alpha",
+      β: "\\beta",
+      γ: "\\gamma",
+    };
+
+    if (value === "+" || value === "-") return value;
+    if (value.startsWith("-")) {
+      const variable = value.slice(1) as "α" | "β" | "γ";
+      return `-${variableMap[variable]}`;
+    }
+    const variable = value as "α" | "β" | "γ";
+    return variableMap[variable];
   };
+
   const rows = [
-    ...matrix.nodes,
-    ...Object.entries(matrix.features).map(([name, value]) => `${latexValue(value)}${latexEscapeText(name)}`),
+    ...matrix.nodes.map((node) => latexEscapeText(node)),
+    ...Object.entries(matrix.features).map(
+      ([name, value]) => `${latexValue(value)}${latexEscapeText(name)}`,
+    ),
   ];
-  return `\\phonfeat[l]{${rows.length ? rows.join(" \\\\") : "\\mbox{}"}}`;
+  const featureMatrix = `\\phonfeat[l]{${rows.length ? rows.join(" \\\\") : "\\mbox{}"}}`;
+  const label = matrix.label.trim();
+
+  if (!label) return featureMatrix;
+  return `\\shortstack{${latexEscapeText(label)}\\\\${featureMatrix}}`;
 }
 
 function latexBoundary(token: BoundaryToken): string {
   const map: Record<string, string> = {
     "#": "\\#", "+": "+", ".": ".", "$": "\\$", "σ": "\\sigma",
-    "ω": "\\omega", "μ": "\\mu", "∅": "$\\varnothing$", C: "C", V: "V",
+    "ω": "\\omega", "μ": "\\mu", "∅": "$\\varnothing$", C: "C", V: "V", N: "N", S: "S",
   };
   return map[token.value] ?? latexEscapeText(token.value);
 }
 
 function latexSlot(slot: RuleSlot, tokens: RuleToken[]): string {
-  if (tokens.length === 0) return "$\\varnothing$";
+  if (tokens.length === 0) return "";
   const parts: string[] = [];
   let symbols: SymbolToken[] = [];
 
@@ -639,6 +810,11 @@ function App() {
   const [search, setSearch] = useState("");
   const [customSymbol, setCustomSymbol] = useState("");
   const [customFeature, setCustomFeature] = useState("");
+  const [customFeatureValue, setCustomFeatureValue] = useState<FeatureValue>("+");
+  const [slotDrafts, setSlotDrafts] = useState<Record<RuleSlot, string>>({ X: "", Y: "", A: "", B: "" });
+  const [slotClipboard, setSlotClipboard] = useState<RuleToken[] | null>(null);
+  const [copiedFromSlot, setCopiedFromSlot] = useState<RuleSlot | null>(null);
+  const [advancedFeatures, setAdvancedFeatures] = useState(false);
   const [status, setStatus] = useState("");
 
   useEffect(() => {
@@ -663,6 +839,10 @@ function App() {
   const filteredFeatureGroups = useMemo(() => {
     const query = search.trim().toLowerCase();
     const filtered = FEATURES.filter((feature) => {
+      if (!advancedFeatures && !BASIC_FEATURE_NAMES.has(feature.name)) {
+        return false;
+      }
+
       if (!query) return true;
       return feature.name.toLowerCase().includes(query) || feature.group.toLowerCase().includes(query);
     });
@@ -671,7 +851,7 @@ function App() {
       (groups[feature.group] ??= []).push(feature);
       return groups;
     }, {});
-  }, [search]);
+  }, [advancedFeatures, search]);
 
   function commitRule(updater: (previous: RuleState) => RuleState) {
     setRule((previous) => {
@@ -716,7 +896,78 @@ function App() {
     setCustomSymbol("");
   }
 
+  function addTypedSlotContent(slot: RuleSlot) {
+    let value = slotDrafts[slot].trim();
+    if (!value) return;
+
+    if (slot === "X" && value.startsWith("/") && value.endsWith("/")) {
+      value = value.slice(1, -1).trim();
+    } else if (slot === "Y" && value.startsWith("[") && value.endsWith("]")) {
+      value = value.slice(1, -1).trim();
+    }
+
+    const pieces = value.split(/[\s,]+/u).filter(Boolean);
+    if (!pieces.length) return;
+
+    const newTokens: RuleToken[] = pieces.map((piece) => {
+      const boundary = BOUNDARIES.find(
+        (candidate) => candidate.value === piece && candidate.value !== "",
+      );
+
+      if (boundary) {
+        return {
+          id: createId(),
+          kind: "boundary",
+          value: boundary.value,
+          name: boundary.name,
+        };
+      }
+
+      return {
+        id: createId(),
+        kind: "symbol",
+        symbol: piece,
+        name: "typed IPA or phonological symbol",
+      };
+    });
+
+    commitRule((previous) => ({
+      ...previous,
+      [slot]: [...previous[slot], ...newTokens],
+    }));
+    setActiveSlot(slot);
+    setSlotDrafts((previous) => ({ ...previous, [slot]: "" }));
+  }
+
+  function updateTokenValue(slot: RuleSlot, tokenId: string, nextValue: string) {
+    const value = nextValue.trim();
+    if (!value) {
+      removeToken(slot, tokenId);
+      return;
+    }
+
+    commitRule((previous) => ({
+      ...previous,
+      [slot]: previous[slot].map((token) => {
+        if (token.id !== tokenId) return token;
+        if (token.kind === "symbol") {
+          return { ...token, symbol: value, name: "typed IPA or phonological symbol" };
+        }
+        if (token.kind === "boundary") {
+          return { ...token, value, name: "typed notation" };
+        }
+        return token;
+      }),
+    }));
+  }
+
   function addBoundary(value: string, name: string) {
+    if (value === "") {
+      clearSlot(activeSlot);
+      setStatus("Active position set to blank.");
+      return;
+    }
+
     addToken({ id: createId(), kind: "boundary", value, name });
   }
 
@@ -724,6 +975,7 @@ function App() {
     const matrix: MatrixToken = {
       id: createId(),
       kind: "matrix",
+      label: "",
       features: {},
       nodes: [],
     };
@@ -758,6 +1010,7 @@ function App() {
     const matrix: MatrixToken = update({
       id: createId(),
       kind: "matrix",
+      label: "",
       features: {},
       nodes: [],
     });
@@ -803,11 +1056,45 @@ function App() {
     }));
   }
 
-  function addCustomFeature(value: FeatureValue) {
+  function addCustomFeature() {
     const name = customFeature.trim();
     if (!name) return;
-    setFeature(name, value);
+    setFeature(name, customFeatureValue);
     setCustomFeature("");
+  }
+
+  function updateMatrixLabel(slot: RuleSlot, matrixId: string, label: string) {
+    commitRule((previous) => ({
+      ...previous,
+      [slot]: previous[slot].map((token) =>
+        token.id === matrixId && token.kind === "matrix"
+          ? { ...token, label }
+          : token,
+      ),
+    }));
+    setSelectedMatrixId(matrixId);
+  }
+
+  function updateMatrixFromText(slot: RuleSlot, matrixId: string, value: string) {
+    const parsed = parseMatrixText(value);
+    commitRule((previous) => ({
+      ...previous,
+      [slot]: previous[slot].map((token) =>
+        token.id === matrixId && token.kind === "matrix"
+          ? { ...token, ...parsed }
+          : token,
+      ),
+    }));
+    setSelectedMatrixId(matrixId);
+  }
+
+  function setCurrentMatrixLabel(label: string) {
+    const targetId = findTargetMatrixId();
+    if (!targetId) {
+      ensureMatrixAndUpdate((matrix) => ({ ...matrix, label }));
+      return;
+    }
+    updateMatrixLabel(activeSlot, targetId, label);
   }
 
   function removeToken(slot: RuleSlot, tokenId: string) {
@@ -832,6 +1119,28 @@ function App() {
   function clearSlot(slot: RuleSlot) {
     commitRule((previous) => ({ ...previous, [slot]: [] }));
     if (slot === activeSlot) setSelectedMatrixId(null);
+  }
+
+  function copySlot(slot: RuleSlot) {
+    setSlotClipboard(cloneRule({ X: rule[slot], Y: [], A: [], B: [] }).X);
+    setCopiedFromSlot(slot);
+    setStatus(`${SLOT_LABELS[slot]} copied. Choose Paste in another box.`);
+  }
+
+  function pasteSlot(slot: RuleSlot) {
+    if (slotClipboard === null) return;
+
+    commitRule((previous) => ({
+      ...previous,
+      [slot]: duplicateTokens(slotClipboard),
+    }));
+    setActiveSlot(slot);
+    setSelectedMatrixId(null);
+    setStatus(
+      copiedFromSlot
+        ? `${SLOT_LABELS[copiedFromSlot]} pasted into ${SLOT_LABELS[slot]}.`
+        : `Copied contents pasted into ${SLOT_LABELS[slot]}.`,
+    );
   }
 
   function clearAll() {
@@ -863,10 +1172,10 @@ function App() {
   async function exportPng() {
     type CanvasPiece =
       | { kind: "text"; text: string }
-      | { kind: "matrix"; rows: string[] };
+      | { kind: "matrix"; label: string; rows: string[] };
 
     const slotPieces = (slot: RuleSlot, tokens: RuleToken[]): CanvasPiece[] => {
-      if (tokens.length === 0) return [{ kind: "text", text: "∅" }];
+      if (tokens.length === 0) return [];
 
       const pieces: CanvasPiece[] = [];
       let symbolGroup: SymbolToken[] = [];
@@ -891,11 +1200,12 @@ function App() {
         flushSymbols();
 
         if (token.kind === "matrix") {
-          const rows = [
-            ...token.nodes,
-            ...Object.entries(token.features).map(([name, value]) => `${value}${name}`),
-          ];
-          pieces.push({ kind: "matrix", rows: rows.length ? rows : ["empty"] });
+          const rows = matrixRows(token);
+          pieces.push({
+            kind: "matrix",
+            label: token.label.trim(),
+            rows: rows.length ? rows : ["empty"],
+          });
         } else {
           pieces.push({ kind: "text", text: token.value });
         }
@@ -925,6 +1235,7 @@ function App() {
       const textFont = '30px "Segoe UI", "Arial Unicode MS", sans-serif';
       const matrixFont = '18px "Segoe UI", "Arial Unicode MS", sans-serif';
       const matrixLineHeight = 24;
+      const matrixLabelHeight = 25;
       const matrixHorizontalPadding = 17;
       const matrixVerticalPadding = 10;
       const pieceGap = 16;
@@ -940,13 +1251,20 @@ function App() {
         }
 
         measure.font = matrixFont;
-        const contentWidth = Math.max(
+        const rowWidth = Math.max(
           42,
           ...piece.rows.map((row) => Math.ceil(measure.measureText(row).width)),
         );
+        const labelWidth = piece.label
+          ? Math.ceil(measure.measureText(piece.label).width)
+          : 0;
+        const contentWidth = Math.max(rowWidth, labelWidth);
         return {
           width: contentWidth + matrixHorizontalPadding * 2,
-          height: piece.rows.length * matrixLineHeight + matrixVerticalPadding * 2,
+          height:
+            piece.rows.length * matrixLineHeight +
+            matrixVerticalPadding * 2 +
+            (piece.label ? matrixLabelHeight : 0),
         };
       });
 
@@ -988,26 +1306,40 @@ function App() {
         }
 
         const top = centerY - size.height / 2;
+        const matrixTop = top + (piece.label ? matrixLabelHeight : 0);
         const bottom = top + size.height;
         const bracketArm = 9;
 
+        context.font = matrixFont;
+        if (piece.label) {
+          const labelWidth = context.measureText(piece.label).width;
+          context.fillText(
+            piece.label,
+            x + (size.width - labelWidth) / 2,
+            top + matrixLabelHeight / 2,
+          );
+        }
+
         context.beginPath();
-        context.moveTo(x + bracketArm, top);
-        context.lineTo(x, top);
+        context.moveTo(x + bracketArm, matrixTop);
+        context.lineTo(x, matrixTop);
         context.lineTo(x, bottom);
         context.lineTo(x + bracketArm, bottom);
         context.stroke();
 
         context.beginPath();
-        context.moveTo(x + size.width - bracketArm, top);
-        context.lineTo(x + size.width, top);
+        context.moveTo(x + size.width - bracketArm, matrixTop);
+        context.lineTo(x + size.width, matrixTop);
         context.lineTo(x + size.width, bottom);
         context.lineTo(x + size.width - bracketArm, bottom);
         context.stroke();
 
-        context.font = matrixFont;
         piece.rows.forEach((row, rowIndex) => {
-          const rowY = top + matrixVerticalPadding + matrixLineHeight * rowIndex + matrixLineHeight / 2;
+          const rowY =
+            matrixTop +
+            matrixVerticalPadding +
+            matrixLineHeight * rowIndex +
+            matrixLineHeight / 2;
           context.fillText(row, x + matrixHorizontalPadding, rowY);
         });
 
@@ -1049,16 +1381,42 @@ function App() {
 
   const currentMatrix = selectedMatrix();
 
-  function renderMatrix(matrix: MatrixToken) {
-    const lines = [
-      ...matrix.nodes.map((node) => ({ key: `node-${node}`, text: node })),
-      ...Object.entries(matrix.features).map(([name, value]) => ({ key: `feature-${name}`, text: `${value}${name}` })),
-    ];
-
+  function renderMatrix(slot: RuleSlot, matrix: MatrixToken) {
     return (
-      <span className="matrix-visual" aria-label={formatMatrixText(matrix)}>
-        {lines.length === 0 ? <span className="empty-matrix">empty matrix</span> : lines.map((line) => <span key={line.key}>{line.text}</span>)}
-      </span>
+      <div className="matrix-editor-stack" aria-label={formatMatrixText(matrix)}>
+        <input
+          className="matrix-label-input"
+          defaultValue={matrix.label}
+          key={`matrix-label-${matrix.id}-${matrix.label}`}
+          onClick={(event: MouseEvent<HTMLInputElement>) => event.stopPropagation()}
+          onFocus={() => {
+            setActiveSlot(slot);
+            setSelectedMatrixId(matrix.id);
+          }}
+          onBlur={(event: FocusEvent<HTMLInputElement>) => updateMatrixLabel(slot, matrix.id, event.target.value)}
+          onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+          placeholder="C / V / N / S"
+          aria-label="Matrix category label"
+        />
+        <div className="matrix-editor-visual">
+          <textarea
+            className="matrix-direct-textarea"
+            defaultValue={matrixToEditableText(matrix)}
+            key={`matrix-rows-${matrix.id}-${matrixToEditableText(matrix)}`}
+            rows={Math.max(2, matrixRows(matrix).length)}
+            onClick={(event: MouseEvent<HTMLTextAreaElement>) => event.stopPropagation()}
+            onFocus={() => {
+              setActiveSlot(slot);
+              setSelectedMatrixId(matrix.id);
+            }}
+            onBlur={(event: FocusEvent<HTMLTextAreaElement>) => updateMatrixFromText(slot, matrix.id, event.target.value)}
+            placeholder={"+consonantal\n-sonorant"}
+            aria-label="Feature matrix rows"
+          />
+        </div>
+      </div>
     );
   }
 
@@ -1080,16 +1438,21 @@ function App() {
     );
 
     return (
-      <span className="preview-feature-matrix" key={matrix.id} aria-label={formatMatrixText(matrix)}>
-        {bracket("left")}
-        <span className="preview-matrix-rows">
-          {rows.length === 0 ? (
-            <span className="preview-matrix-empty">empty</span>
-          ) : rows.map((row) => (
-            <span className="preview-matrix-row" key={row.key}>{row.text}</span>
-          ))}
+      <span className="preview-matrix-stack" key={matrix.id} aria-label={formatMatrixText(matrix)}>
+        {matrix.label.trim() && (
+          <span className="preview-matrix-label">{matrix.label.trim()}</span>
+        )}
+        <span className="preview-feature-matrix">
+          {bracket("left")}
+          <span className="preview-matrix-rows">
+            {rows.length === 0 ? (
+              <span className="preview-matrix-empty">empty</span>
+            ) : rows.map((row) => (
+              <span className="preview-matrix-row" key={row.key}>{row.text}</span>
+            ))}
+          </span>
+          {bracket("right")}
         </span>
-        {bracket("right")}
       </span>
     );
   }
@@ -1098,7 +1461,7 @@ function App() {
     const tokens = rule[slot];
 
     if (tokens.length === 0) {
-      return <span className="preview-empty">∅</span>;
+      return <span className="preview-blank" aria-label="blank">&nbsp;</span>;
     }
 
     const content: ReactNode[] = [];
@@ -1260,31 +1623,89 @@ function App() {
   }
 
   function renderRuleToken(slot: RuleSlot, token: RuleToken, index: number) {
-    const selected = token.kind === "matrix" && token.id === selectedMatrixId && slot === activeSlot;
+    const selected =
+      token.kind === "matrix" && token.id === selectedMatrixId && slot === activeSlot;
+    const tokenValue =
+      token.kind === "symbol"
+        ? token.symbol
+        : token.kind === "boundary"
+          ? token.value
+          : "";
 
     return (
-      <span
+      <div
         className={`rule-token ${token.kind} ${selected ? "selected-token" : ""}`}
         key={token.id}
-        title={token.kind === "symbol" ? token.name : token.kind === "boundary" ? token.name : "Feature matrix"}
+        title={
+          token.kind === "symbol"
+            ? token.name
+            : token.kind === "boundary"
+              ? token.name
+              : "Feature matrix"
+        }
         onClick={() => {
-          selectSlot(slot);
+          setActiveSlot(slot);
           if (token.kind === "matrix") {
             setSelectedMatrixId(token.id);
             setActiveTab("features");
           }
         }}
       >
-        <span className="token-content">
-          {token.kind === "matrix" ? renderMatrix(token) : token.kind === "symbol" ? token.symbol : token.value}
-        </span>
+        <div className="token-content">
+          {token.kind === "matrix" ? (
+            renderMatrix(slot, token)
+          ) : (
+            <input
+              className="token-inline-input"
+              defaultValue={tokenValue}
+              key={`${token.id}-${tokenValue}`}
+              size={Math.max(1, Array.from(tokenValue).length)}
+              onClick={(event: MouseEvent<HTMLInputElement>) => event.stopPropagation()}
+              onFocus={() => setActiveSlot(slot)}
+              onBlur={(event: FocusEvent<HTMLInputElement>) => updateTokenValue(slot, token.id, event.target.value)}
+              onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+              }}
+              aria-label={token.kind === "symbol" ? "Edit symbol" : "Edit notation"}
+            />
+          )}
+        </div>
 
         <span className="token-controls">
-          <button type="button" onClick={(event: MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); moveToken(slot, token.id, -1); }} disabled={index === 0} aria-label="Move left">‹</button>
-          <button type="button" onClick={(event: MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); moveToken(slot, token.id, 1); }} disabled={index === rule[slot].length - 1} aria-label="Move right">›</button>
-          <button type="button" onClick={(event: MouseEvent<HTMLButtonElement>) => { event.stopPropagation(); removeToken(slot, token.id); }} aria-label="Remove">×</button>
+          <button
+            type="button"
+            onClick={(event: MouseEvent<HTMLButtonElement>) => {
+              event.stopPropagation();
+              moveToken(slot, token.id, -1);
+            }}
+            disabled={index === 0}
+            aria-label="Move left"
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            onClick={(event: MouseEvent<HTMLButtonElement>) => {
+              event.stopPropagation();
+              moveToken(slot, token.id, 1);
+            }}
+            disabled={index === rule[slot].length - 1}
+            aria-label="Move right"
+          >
+            ›
+          </button>
+          <button
+            type="button"
+            onClick={(event: MouseEvent<HTMLButtonElement>) => {
+              event.stopPropagation();
+              removeToken(slot, token.id);
+            }}
+            aria-label="Remove"
+          >
+            ×
+          </button>
         </span>
-      </span>
+      </div>
     );
   }
 
@@ -1302,12 +1723,54 @@ function App() {
           }
         }}
       >
-        <span className="slot-label">{SLOT_LABELS[slot]}</span>
-        <span className="slot-tokens">
+        <div className="slot-header">
+          <span className="slot-label">{SLOT_LABELS[slot]}</span>
+          <span className="slot-clipboard-controls" onClick={(event: MouseEvent<HTMLSpanElement>) => event.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => copySlot(slot)}
+              aria-label={`Copy ${SLOT_LABELS[slot]}`}
+              title={`Copy all contents of ${SLOT_LABELS[slot]}`}
+            >
+              Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => pasteSlot(slot)}
+              disabled={slotClipboard === null}
+              aria-label={`Paste into ${SLOT_LABELS[slot]}`}
+              title={copiedFromSlot ? `Replace this box with copied ${SLOT_LABELS[copiedFromSlot]}` : "Copy a box first"}
+            >
+              Paste
+            </button>
+          </span>
+        </div>
+        <div className="slot-tokens">
           {rule[slot].length === 0
-            ? <span className="slot-placeholder">Click here, then choose symbols or features below</span>
+            ? <span className="slot-blank" aria-label="blank position">&nbsp;</span>
             : rule[slot].map((token, index) => renderRuleToken(slot, token, index))}
-        </span>
+        </div>
+        <div className="slot-direct-entry" onClick={(event: MouseEvent<HTMLDivElement>) => event.stopPropagation()}>
+          <input
+            value={slotDrafts[slot]}
+            onChange={(event: ChangeEvent<HTMLInputElement>) =>
+              setSlotDrafts((previous) => ({ ...previous, [slot]: event.target.value }))
+            }
+            onFocus={() => setActiveSlot(slot)}
+            onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+              if (event.key === "Enter") addTypedSlotContent(slot);
+            }}
+            placeholder="Type IPA or notation; press Enter"
+            aria-label={`Type directly into ${SLOT_LABELS[slot]}`}
+          />
+          <button
+            type="button"
+            onClick={() => addTypedSlotContent(slot)}
+            aria-label={`Add typed content to ${SLOT_LABELS[slot]}`}
+          >
+            +
+          </button>
+        </div>
       </div>
     );
   }
@@ -1424,10 +1887,75 @@ function App() {
 
               {activeTab === "features" && (
                 <>
-                  <p className="matrix-note">Choose a matrix in the rule preview, or click a feature to create a new matrix automatically. Feature values and feature-geometric nodes are independent; selecting a feature never adds a node.</p>
+                  <p className="matrix-note">Choose a matrix in the rule boxes, or click a feature to create one automatically. You can also type its category and rows directly. Feature values and feature-geometric nodes remain independent.</p>
 
+                  <label className="advanced-feature-toggle">
+                    <input
+                      type="checkbox"
+                      checked={advancedFeatures}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) => setAdvancedFeatures(event.target.checked)}
+                    />
+                    <span>
+                      <strong>Advanced features</strong>
+                      <small>
+                        {advancedFeatures
+                          ? "Showing the complete feature inventory."
+                          : "Showing the introductory feature set only."}
+                      </small>
+                    </span>
+                  </label>
+
+                  {currentMatrix && (
+                    <div className="matrix-direct-panel">
+                      <div>
+                        <p className="unary-heading">Category above matrix</p>
+                        <div className="matrix-category-row">
+                          {["C", "V", "N", "S"].map((label) => (
+                            <button
+                              type="button"
+                              className={`matrix-category-button ${currentMatrix.label === label ? "selected" : ""}`}
+                              onClick={() =>
+                                setCurrentMatrixLabel(currentMatrix.label === label ? "" : label)
+                              }
+                              key={label}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                          <input
+                            className="matrix-label-field"
+                            defaultValue={currentMatrix.label}
+                            key={`panel-label-${currentMatrix.id}-${currentMatrix.label}`}
+                            onBlur={(event: FocusEvent<HTMLInputElement>) =>
+                              updateMatrixLabel(activeSlot, currentMatrix.id, event.target.value)
+                            }
+                            onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+                              if (event.key === "Enter") event.currentTarget.blur();
+                            }}
+                            placeholder="Custom category"
+                            aria-label="Custom matrix category"
+                          />
+                        </div>
+                      </div>
+                      <label className="matrix-text-editor-label">
+                        <span>Type matrix rows, one per line</span>
+                        <textarea
+                          className="matrix-text-editor"
+                          defaultValue={matrixToEditableText(currentMatrix)}
+                          key={`panel-rows-${currentMatrix.id}-${matrixToEditableText(currentMatrix)}`}
+                          rows={Math.max(4, matrixRows(currentMatrix).length)}
+                          onBlur={(event: FocusEvent<HTMLTextAreaElement>) =>
+                            updateMatrixFromText(activeSlot, currentMatrix.id, event.target.value)
+                          }
+                          placeholder={"LABIAL\n+round\n-voice"}
+                        />
+                      </label>
+                    </div>
+                  )}
+
+                  <p className="unary-heading">Unary place features</p>
                   <div className="node-row">
-                    {(["LARYNGEAL", "LABIAL", "CORONAL", "DORSAL"] as PlaceNode[]).map((node) => (
+                    {UNARY_PLACE_FEATURES.map((node) => (
                       <button
                         type="button"
                         className={`node-button ${currentMatrix?.nodes.includes(node) ? "selected" : ""}`}
@@ -1450,17 +1978,36 @@ function App() {
                               <span className="feature-name">
                                 [±{feature.name}]
                               </span>
-                              {(["+", "-", "α", "-α"] as FeatureValue[]).map((value) => (
-                                <button
-                                  type="button"
-                                  className={`value-button ${selectedValue === value ? "selected" : ""} ${value.includes("α") ? "alpha-value" : ""}`}
-                                  onClick={() => setFeature(feature, value)}
-                                  title={`Set ${feature.name} to ${value}`}
-                                  key={value}
-                                >
-                                  {value}
-                                </button>
-                              ))}
+                              <button
+                                type="button"
+                                className={`value-button ${selectedValue === "+" ? "selected" : ""}`}
+                                onClick={() => setFeature(feature, "+")}
+                                title={`Set ${feature.name} to +`}
+                              >
+                                +
+                              </button>
+                              <button
+                                type="button"
+                                className={`value-button ${selectedValue === "-" ? "selected" : ""}`}
+                                onClick={() => setFeature(feature, "-")}
+                                title={`Set ${feature.name} to −`}
+                              >
+                                −
+                              </button>
+                              <select
+                                className={`variable-select ${isVariableFeatureValue(selectedValue) ? "selected" : ""}`}
+                                value={isVariableFeatureValue(selectedValue) ? selectedValue : ""}
+                                onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                                  const value = event.target.value as VariableFeatureValue | "";
+                                  if (value) setFeature(feature, value);
+                                }}
+                                aria-label={`Variable value for ${feature.name}`}
+                              >
+                                <option value="">α/β/γ</option>
+                                {VARIABLE_FEATURE_VALUES.map((value) => (
+                                  <option value={value} key={value}>{value}</option>
+                                ))}
+                              </select>
                               <button type="button" className="value-button remove-feature" onClick={() => removeFeature(feature.name)} title={`Remove ${feature.name}`}>×</button>
                             </div>
                           );
@@ -1469,15 +2016,26 @@ function App() {
                     </section>
                   ))}
 
-                  <div className="custom-row">
+                  <div className="custom-row custom-feature-row">
                     <input
                       value={customFeature}
                       onChange={(event: ChangeEvent<HTMLInputElement>) => setCustomFeature(event.target.value)}
                       placeholder="Custom feature name"
                       aria-label="Custom feature name"
                     />
-                    <button type="button" className="small-button" onClick={() => addCustomFeature("+")}>Add +</button>
-                    <button type="button" className="small-button" onClick={() => addCustomFeature("-")}>Add −</button>
+                    <select
+                      className="custom-value-select"
+                      value={customFeatureValue}
+                      onChange={(event: ChangeEvent<HTMLSelectElement>) => setCustomFeatureValue(event.target.value as FeatureValue)}
+                      aria-label="Custom feature value"
+                    >
+                      <option value="+">+</option>
+                      <option value="-">−</option>
+                      {VARIABLE_FEATURE_VALUES.map((value) => (
+                        <option value={value} key={value}>{value}</option>
+                      ))}
+                    </select>
+                    <button type="button" className="small-button" onClick={addCustomFeature}>Add feature</button>
                   </div>
                 </>
               )}
@@ -1486,7 +2044,7 @@ function App() {
                 <div className="boundary-grid">
                   {BOUNDARIES.map((boundary) => (
                     <button type="button" className="boundary-button" onClick={() => addBoundary(boundary.value, boundary.name)} key={`${boundary.value}-${boundary.name}`}>
-                      <span className="boundary-symbol">{boundary.value}</span>
+                      <span className="boundary-symbol">{boundary.value || "blank"}</span>
                       <span className="boundary-name">{boundary.name}</span>
                     </button>
                   ))}
