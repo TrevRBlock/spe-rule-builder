@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import "./App.css";
 
 type RuleSlot = "X" | "Y" | "A" | "B";
@@ -230,31 +230,89 @@ const IPA_ITEMS: IpaItem[] = [
 ];
 
 const FEATURES: FeatureDefinition[] = [
+  // Feature inventories differ across theories. These entries are intentionally independent:
+  // choosing a feature never adds a feature-geometric node automatically.
   { name: "syllabic", group: "Major class" },
   { name: "consonantal", group: "Major class" },
   { name: "sonorant", group: "Major class" },
   { name: "approximant", group: "Major class" },
-  { name: "continuant", group: "Manner" },
-  { name: "delayed release", group: "Manner" },
-  { name: "nasal", group: "Manner" },
-  { name: "lateral", group: "Manner" },
-  { name: "strident", group: "Manner", node: "CORONAL" },
-  { name: "distributed", group: "Manner", node: "CORONAL" },
-  { name: "voice", group: "Laryngeal", node: "LARYNGEAL" },
-  { name: "spread glottis", group: "Laryngeal", node: "LARYNGEAL" },
-  { name: "constricted glottis", group: "Laryngeal", node: "LARYNGEAL" },
-  { name: "round", group: "Labial", node: "LABIAL" },
-  { name: "anterior", group: "Coronal", node: "CORONAL" },
-  { name: "high", group: "Dorsal and vowel", node: "DORSAL" },
-  { name: "low", group: "Dorsal and vowel", node: "DORSAL" },
-  { name: "back", group: "Dorsal and vowel", node: "DORSAL" },
-  { name: "advanced tongue root", group: "Dorsal and vowel", node: "DORSAL" },
-  { name: "retracted tongue root", group: "Dorsal and vowel", node: "DORSAL" },
-  { name: "tense", group: "Vowel and prosodic" },
-  { name: "reduced", group: "Vowel and prosodic" },
-  { name: "long", group: "Vowel and prosodic" },
-  { name: "stress", group: "Vowel and prosodic" },
-  { name: "tone", group: "Vowel and prosodic" },
+  { name: "vocalic", group: "Major class" },
+  { name: "vocoid", group: "Major class" },
+  { name: "obstruent", group: "Major class" },
+
+  { name: "continuant", group: "Manner and stricture" },
+  { name: "delayed release", group: "Manner and stricture" },
+  { name: "nasal", group: "Manner and stricture" },
+  { name: "lateral", group: "Manner and stricture" },
+  { name: "strident", group: "Manner and stricture" },
+  { name: "tap", group: "Manner and stricture" },
+  { name: "trill", group: "Manner and stricture" },
+  { name: "affricate", group: "Manner and stricture" },
+  { name: "interrupted", group: "Manner and stricture" },
+  { name: "checked", group: "Manner and stricture" },
+
+  { name: "voice", group: "Laryngeal" },
+  { name: "spread glottis", group: "Laryngeal" },
+  { name: "constricted glottis", group: "Laryngeal" },
+  { name: "stiff vocal folds", group: "Laryngeal" },
+  { name: "slack vocal folds", group: "Laryngeal" },
+  { name: "aspirated", group: "Laryngeal" },
+  { name: "glottalized", group: "Laryngeal" },
+  { name: "breathy", group: "Laryngeal" },
+  { name: "creaky", group: "Laryngeal" },
+
+  { name: "labial", group: "Place" },
+  { name: "coronal", group: "Place" },
+  { name: "dorsal", group: "Place" },
+  { name: "pharyngeal", group: "Place" },
+  { name: "radical", group: "Place" },
+  { name: "laryngeal", group: "Place" },
+
+  { name: "round", group: "Labial" },
+  { name: "labiodental", group: "Labial" },
+
+  { name: "anterior", group: "Coronal" },
+  { name: "distributed", group: "Coronal" },
+  { name: "apical", group: "Coronal" },
+  { name: "laminal", group: "Coronal" },
+  { name: "subapical", group: "Coronal" },
+
+  { name: "high", group: "Dorsal and vowel" },
+  { name: "low", group: "Dorsal and vowel" },
+  { name: "back", group: "Dorsal and vowel" },
+  { name: "front", group: "Dorsal and vowel" },
+  { name: "central", group: "Dorsal and vowel" },
+  { name: "advanced tongue root", group: "Dorsal and vowel" },
+  { name: "retracted tongue root", group: "Dorsal and vowel" },
+  { name: "tense", group: "Dorsal and vowel" },
+  { name: "reduced", group: "Dorsal and vowel" },
+
+  { name: "palatalized", group: "Secondary articulation" },
+  { name: "velarized", group: "Secondary articulation" },
+  { name: "labialized", group: "Secondary articulation" },
+  { name: "pharyngealized", group: "Secondary articulation" },
+  { name: "rhotic", group: "Secondary articulation" },
+
+  { name: "long", group: "Prosodic" },
+  { name: "short", group: "Prosodic" },
+  { name: "stress", group: "Prosodic" },
+  { name: "secondary stress", group: "Prosodic" },
+  { name: "tone", group: "Prosodic" },
+  { name: "contour", group: "Prosodic" },
+  { name: "register", group: "Prosodic" },
+  { name: "moraic", group: "Prosodic" },
+  { name: "geminate", group: "Prosodic" },
+  { name: "accent", group: "Prosodic" },
+
+  { name: "covered", group: "Legacy and acoustic" },
+  { name: "glottal constriction", group: "Legacy and acoustic" },
+  { name: "heightened subglottal pressure", group: "Legacy and acoustic" },
+  { name: "grave", group: "Legacy and acoustic" },
+  { name: "acute", group: "Legacy and acoustic" },
+  { name: "compact", group: "Legacy and acoustic" },
+  { name: "diffuse", group: "Legacy and acoustic" },
+  { name: "flat", group: "Legacy and acoustic" },
+  { name: "sharp", group: "Legacy and acoustic" },
 ];
 
 const BOUNDARIES = [
@@ -454,20 +512,6 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function copyComputedStyles(source: Element, target: Element) {
-  if (source instanceof HTMLElement && target instanceof HTMLElement) {
-    const computed = window.getComputedStyle(source);
-    target.style.cssText = Array.from(computed)
-      .map((property) => `${property}:${computed.getPropertyValue(property)};`)
-      .join("");
-  }
-
-  Array.from(source.children).forEach((child, index) => {
-    const targetChild = target.children.item(index);
-    if (targetChild) copyComputedStyles(child, targetChild);
-  });
-}
-
 function latexEscapeText(value: string): string {
   return value
     .replace(/\\/g, "\\textbackslash{}")
@@ -529,13 +573,13 @@ function latexMatrix(matrix: MatrixToken): string {
 function latexBoundary(token: BoundaryToken): string {
   const map: Record<string, string> = {
     "#": "\\#", "+": "+", ".": ".", "$": "\\$", "σ": "\\sigma",
-    "ω": "\\omega", "μ": "\\mu", "∅": "\\varnothing", C: "C", V: "V",
+    "ω": "\\omega", "μ": "\\mu", "∅": "$\\varnothing$", C: "C", V: "V",
   };
   return map[token.value] ?? latexEscapeText(token.value);
 }
 
 function latexSlot(slot: RuleSlot, tokens: RuleToken[]): string {
-  if (tokens.length === 0) return "\\varnothing";
+  if (tokens.length === 0) return "$\\varnothing$";
   const parts: string[] = [];
   let symbols: SymbolToken[] = [];
 
@@ -574,6 +618,7 @@ function buildLatexDocument(rule: RuleState): string {
   return `\\documentclass{article}
 \\usepackage[T1]{fontenc}
 \\usepackage[tone,extra]{tipa}
+\\usepackage{amssymb}
 \\usepackage{phonrule}
 \\pagestyle{empty}
 
@@ -595,7 +640,6 @@ function App() {
   const [customSymbol, setCustomSymbol] = useState("");
   const [customFeature, setCustomFeature] = useState("");
   const [status, setStatus] = useState("");
-  const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(rule));
@@ -727,12 +771,10 @@ function App() {
 
   function setFeature(feature: FeatureDefinition | string, value: FeatureValue) {
     const name = typeof feature === "string" ? feature : feature.name;
-    const node = typeof feature === "string" ? undefined : feature.node;
 
     ensureMatrixAndUpdate((matrix) => ({
       ...matrix,
       features: { ...matrix.features, [name]: value },
-      nodes: node && !matrix.nodes.includes(node) ? [...matrix.nodes, node] : matrix.nodes,
     }));
   }
 
@@ -819,30 +861,103 @@ function App() {
 
 
   async function exportPng() {
-    const source = previewRef.current;
-    if (!source) return;
+    type CanvasPiece =
+      | { kind: "text"; text: string }
+      | { kind: "matrix"; rows: string[] };
+
+    const slotPieces = (slot: RuleSlot, tokens: RuleToken[]): CanvasPiece[] => {
+      if (tokens.length === 0) return [{ kind: "text", text: "∅" }];
+
+      const pieces: CanvasPiece[] = [];
+      let symbolGroup: SymbolToken[] = [];
+
+      const flushSymbols = () => {
+        if (symbolGroup.length === 0) return;
+        const body = symbolGroup.map((token) => token.symbol).join(", ");
+
+        if (slot === "X") pieces.push({ kind: "text", text: `/${body}/` });
+        else if (slot === "Y") pieces.push({ kind: "text", text: `[${body}]` });
+        else pieces.push({ kind: "text", text: body });
+
+        symbolGroup = [];
+      };
+
+      for (const token of tokens) {
+        if (token.kind === "symbol") {
+          symbolGroup.push(token);
+          continue;
+        }
+
+        flushSymbols();
+
+        if (token.kind === "matrix") {
+          const rows = [
+            ...token.nodes,
+            ...Object.entries(token.features).map(([name, value]) => `${value}${name}`),
+          ];
+          pieces.push({ kind: "matrix", rows: rows.length ? rows : ["empty"] });
+        } else {
+          pieces.push({ kind: "text", text: token.value });
+        }
+      }
+
+      flushSymbols();
+      return pieces;
+    };
 
     try {
-      const clone = source.cloneNode(true) as HTMLDivElement;
-      copyComputedStyles(source, clone);
-      clone.style.width = `${Math.max(source.scrollWidth, source.clientWidth)}px`;
-      clone.style.height = `${Math.max(source.scrollHeight, source.clientHeight)}px`;
-      clone.style.overflow = "visible";
-      clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+      if ("fonts" in document) await document.fonts.ready;
 
-      const width = Math.ceil(Math.max(source.scrollWidth, source.clientWidth));
-      const height = Math.ceil(Math.max(source.scrollHeight, source.clientHeight));
-      const serialized = new XMLSerializer().serializeToString(clone);
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><foreignObject width="100%" height="100%">${serialized}</foreignObject></svg>`;
-      const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-      const svgUrl = URL.createObjectURL(svgBlob);
-      const image = new Image();
+      const pieces: CanvasPiece[] = [
+        ...slotPieces("X", rule.X),
+        { kind: "text", text: "→" },
+        ...slotPieces("Y", rule.Y),
+        { kind: "text", text: "/" },
+        ...slotPieces("A", rule.A),
+        { kind: "text", text: "__" },
+        ...slotPieces("B", rule.B),
+      ];
 
-      await new Promise<void>((resolve, reject) => {
-        image.onload = () => resolve();
-        image.onerror = () => reject(new Error("The rule preview could not be rendered."));
-        image.src = svgUrl;
+      const measurementCanvas = document.createElement("canvas");
+      const measure = measurementCanvas.getContext("2d");
+      if (!measure) throw new Error("Canvas is unavailable.");
+
+      const textFont = '30px "Segoe UI", "Arial Unicode MS", sans-serif';
+      const matrixFont = '18px "Segoe UI", "Arial Unicode MS", sans-serif';
+      const matrixLineHeight = 24;
+      const matrixHorizontalPadding = 17;
+      const matrixVerticalPadding = 10;
+      const pieceGap = 16;
+      const outerPadding = 30;
+
+      const sizes = pieces.map((piece) => {
+        if (piece.kind === "text") {
+          measure.font = textFont;
+          return {
+            width: Math.ceil(measure.measureText(piece.text).width),
+            height: 42,
+          };
+        }
+
+        measure.font = matrixFont;
+        const contentWidth = Math.max(
+          42,
+          ...piece.rows.map((row) => Math.ceil(measure.measureText(row).width)),
+        );
+        return {
+          width: contentWidth + matrixHorizontalPadding * 2,
+          height: piece.rows.length * matrixLineHeight + matrixVerticalPadding * 2,
+        };
       });
+
+      const width = Math.ceil(
+        outerPadding * 2 +
+        sizes.reduce((sum, size) => sum + size.width, 0) +
+        Math.max(0, pieces.length - 1) * pieceGap,
+      );
+      const height = Math.ceil(
+        outerPadding * 2 + Math.max(52, ...sizes.map((size) => size.height)),
+      );
 
       const scale = 2;
       const canvas = document.createElement("canvas");
@@ -850,18 +965,66 @@ function App() {
       canvas.height = height * scale;
       const context = canvas.getContext("2d");
       if (!context) throw new Error("Canvas is unavailable.");
+
       context.scale(scale, scale);
       context.fillStyle = "#ffffff";
       context.fillRect(0, 0, width, height);
-      context.drawImage(image, 0, 0, width, height);
-      URL.revokeObjectURL(svgUrl);
+      context.fillStyle = "#20242a";
+      context.strokeStyle = "#263342";
+      context.lineWidth = 2;
+      context.textBaseline = "middle";
+
+      let x = outerPadding;
+      const centerY = height / 2;
+
+      pieces.forEach((piece, index) => {
+        const size = sizes[index];
+
+        if (piece.kind === "text") {
+          context.font = textFont;
+          context.fillText(piece.text, x, centerY);
+          x += size.width + pieceGap;
+          return;
+        }
+
+        const top = centerY - size.height / 2;
+        const bottom = top + size.height;
+        const bracketArm = 9;
+
+        context.beginPath();
+        context.moveTo(x + bracketArm, top);
+        context.lineTo(x, top);
+        context.lineTo(x, bottom);
+        context.lineTo(x + bracketArm, bottom);
+        context.stroke();
+
+        context.beginPath();
+        context.moveTo(x + size.width - bracketArm, top);
+        context.lineTo(x + size.width, top);
+        context.lineTo(x + size.width, bottom);
+        context.lineTo(x + size.width - bracketArm, bottom);
+        context.stroke();
+
+        context.font = matrixFont;
+        piece.rows.forEach((row, rowIndex) => {
+          const rowY = top + matrixVerticalPadding + matrixLineHeight * rowIndex + matrixLineHeight / 2;
+          context.fillText(row, x + matrixHorizontalPadding, rowY);
+        });
+
+        x += size.width + pieceGap;
+      });
 
       const pngBlob = await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("PNG creation failed.")), "image/png");
+        canvas.toBlob(
+          (blob) => blob ? resolve(blob) : reject(new Error("PNG creation failed.")),
+          "image/png",
+        );
       });
+
       downloadBlob(pngBlob, "spe-phonological-rule.png");
       setStatus("PNG exported.");
-    } catch {
+    } catch (error) {
+      console.error(error);
       setStatus("PNG export failed in this browser.");
     }
   }
@@ -1174,7 +1337,7 @@ function App() {
             <span className="status" aria-live="polite">{status}</span>
           </div>
 
-          <div className="plain-preview" aria-label={ruleText} ref={previewRef}>
+          <div className="plain-preview" aria-label={ruleText}>
             {renderPreviewSlot("X")}
             <span className="preview-operator">→</span>
             {renderPreviewSlot("Y")}
@@ -1261,7 +1424,7 @@ function App() {
 
               {activeTab === "features" && (
                 <>
-                  <p className="matrix-note">Choose a matrix in the rule preview, or click a feature to create a new matrix automatically. Feature values can be positive, negative, or linked with α.</p>
+                  <p className="matrix-note">Choose a matrix in the rule preview, or click a feature to create a new matrix automatically. Feature values and feature-geometric nodes are independent; selecting a feature never adds a node.</p>
 
                   <div className="node-row">
                     {(["LARYNGEAL", "LABIAL", "CORONAL", "DORSAL"] as PlaceNode[]).map((node) => (
@@ -1286,7 +1449,6 @@ function App() {
                             <div className="feature-item" key={feature.name}>
                               <span className="feature-name">
                                 [±{feature.name}]
-                                {feature.node && <span className="feature-node"> · {feature.node}</span>}
                               </span>
                               {(["+", "-", "α", "-α"] as FeatureValue[]).map((value) => (
                                 <button
