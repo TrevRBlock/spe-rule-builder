@@ -606,6 +606,27 @@ function parseMatrixText(value: string): Pick<MatrixToken, "nodes" | "features">
   return { nodes, features };
 }
 
+function parseTypedFeatureInput(value: string): Record<string, FeatureValue> | null {
+  const normalized = value.trim().replace(/−/gu, "-");
+  if (!/^[+-]/u.test(normalized)) return null;
+
+  const features: Record<string, FeatureValue> = {};
+  const chunks = normalized.split(/\s*,\s*|\s+(?=[+-]\s*\S)/u);
+
+  for (const rawChunk of chunks) {
+    const chunk = rawChunk.trim();
+    if (!chunk) continue;
+
+    const match = chunk.match(/^([+-])\s*(.+)$/u);
+    if (!match) continue;
+
+    const name = match[2].trim();
+    if (name) features[name] = match[1] as FeatureValue;
+  }
+
+  return Object.keys(features).length > 0 ? features : null;
+}
+
 function formatMatrixText(matrix: MatrixToken): string {
   const lines = matrixRows(matrix);
   const body = lines.length === 0 ? "[ ]" : `[${lines.join(", ")}]`;
@@ -906,6 +927,47 @@ function App() {
       value = value.slice(1, -1).trim();
     }
 
+    const typedFeatures = parseTypedFeatureInput(value);
+    if (typedFeatures) {
+      const existingMatrixId = findTargetMatrixIdForSlot(slot);
+      const targetMatrixId = existingMatrixId ?? createId();
+
+      commitRule((previous) => {
+        if (existingMatrixId) {
+          return {
+            ...previous,
+            [slot]: previous[slot].map((token) =>
+              token.id === existingMatrixId && token.kind === "matrix"
+                ? {
+                    ...token,
+                    features: { ...token.features, ...typedFeatures },
+                  }
+                : token,
+            ),
+          };
+        }
+
+        const matrix: MatrixToken = {
+          id: targetMatrixId,
+          kind: "matrix",
+          label: "",
+          features: typedFeatures,
+          nodes: [],
+        };
+
+        return {
+          ...previous,
+          [slot]: [...previous[slot], matrix],
+        };
+      });
+
+      setActiveSlot(slot);
+      setSelectedMatrixId(targetMatrixId);
+      setActiveTab("features");
+      setSlotDrafts((previous) => ({ ...previous, [slot]: "" }));
+      return;
+    }
+
     const pieces = value.split(/[\s,]+/u).filter(Boolean);
     if (!pieces.length) return;
 
@@ -984,13 +1046,25 @@ function App() {
     setActiveTab("features");
   }
 
-  function findTargetMatrixId(): string | null {
-    const activeTokens = rule[activeSlot];
-    if (selectedMatrixId && activeTokens.some((token) => token.id === selectedMatrixId && token.kind === "matrix")) {
+  function findTargetMatrixIdForSlot(slot: RuleSlot): string | null {
+    const slotTokens = rule[slot];
+    if (
+      selectedMatrixId &&
+      slotTokens.some(
+        (token) => token.id === selectedMatrixId && token.kind === "matrix",
+      )
+    ) {
       return selectedMatrixId;
     }
-    const lastMatrix = [...activeTokens].reverse().find((token): token is MatrixToken => token.kind === "matrix");
+
+    const lastMatrix = [...slotTokens]
+      .reverse()
+      .find((token): token is MatrixToken => token.kind === "matrix");
     return lastMatrix?.id ?? null;
+  }
+
+  function findTargetMatrixId(): string | null {
+    return findTargetMatrixIdForSlot(activeSlot);
   }
 
   function ensureMatrixAndUpdate(update: (matrix: MatrixToken) => MatrixToken) {
