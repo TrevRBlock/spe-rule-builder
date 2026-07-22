@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import "./App.css";
 
 type RuleSlot = "X" | "Y" | "A" | "B";
@@ -270,6 +270,97 @@ const BOUNDARIES = [
   { value: "V", name: "vowel variable" },
 ];
 
+
+const PULMONIC_PLACES = [
+  "Bilabial",
+  "Labiodental",
+  "Dental",
+  "Alveolar",
+  "Postalveolar",
+  "Retroflex",
+  "Palatal",
+  "Velar",
+  "Uvular",
+  "Pharyngeal",
+  "Glottal",
+] as const;
+
+const PULMONIC_ROWS = [
+  "Plosive",
+  "Nasal",
+  "Trill",
+  "Tap or flap",
+  "Fricative",
+  "Lateral fricative",
+  "Approximant",
+  "Lateral approximant",
+] as const;
+
+const PULMONIC_CHART: Record<string, Record<string, string[]>> = {
+  Plosive: {
+    Bilabial: ["p", "b"], Alveolar: ["t", "d"], Retroflex: ["ʈ", "ɖ"],
+    Palatal: ["c", "ɟ"], Velar: ["k", "ɡ"], Uvular: ["q", "ɢ"], Glottal: ["ʔ"],
+  },
+  Nasal: {
+    Bilabial: ["m"], Labiodental: ["ɱ"], Alveolar: ["n"], Retroflex: ["ɳ"],
+    Palatal: ["ɲ"], Velar: ["ŋ"], Uvular: ["ɴ"],
+  },
+  Trill: { Bilabial: ["ʙ"], Alveolar: ["r"], Uvular: ["ʀ"] },
+  "Tap or flap": { Labiodental: ["ⱱ"], Alveolar: ["ɾ"], Retroflex: ["ɽ"] },
+  Fricative: {
+    Bilabial: ["ɸ", "β"], Labiodental: ["f", "v"], Dental: ["θ", "ð"],
+    Alveolar: ["s", "z"], Postalveolar: ["ʃ", "ʒ"], Retroflex: ["ʂ", "ʐ"],
+    Palatal: ["ç", "ʝ"], Velar: ["x", "ɣ"], Uvular: ["χ", "ʁ"],
+    Pharyngeal: ["ħ", "ʕ"], Glottal: ["h", "ɦ"],
+  },
+  "Lateral fricative": { Alveolar: ["ɬ", "ɮ"] },
+  Approximant: {
+    Labiodental: ["ʋ"], Alveolar: ["ɹ"], Retroflex: ["ɻ"],
+    Palatal: ["j"], Velar: ["ɰ"],
+  },
+  "Lateral approximant": {
+    Alveolar: ["l"], Retroflex: ["ɭ"], Palatal: ["ʎ"], Velar: ["ʟ"],
+  },
+};
+
+const VOWEL_POSITIONS = [
+  { height: "Close", front: ["i", "y"], central: ["ɨ", "ʉ"], back: ["ɯ", "u"] },
+  { height: "Near-close", front: ["ɪ", "ʏ"], central: [], back: ["ʊ"] },
+  { height: "Close-mid", front: ["e", "ø"], central: ["ɘ", "ɵ"], back: ["ɤ", "o"] },
+  { height: "Mid", front: [], central: ["ə"], back: [] },
+  { height: "Open-mid", front: ["ɛ", "œ"], central: ["ɜ", "ɞ"], back: ["ʌ", "ɔ"] },
+  { height: "Near-open", front: ["æ"], central: ["ɐ"], back: [] },
+  { height: "Open", front: ["a", "ɶ"], central: [], back: ["ɑ", "ɒ"] },
+] as const;
+
+const TIPA_SYMBOLS: Record<string, string> = {
+  "ʈ": "\\textrtailt{}", "ɖ": "\\textrtaild{}", "ɟ": "\\textbardotlessj{}",
+  "ɡ": "g", "ɢ": "\\textscg{}", "ʔ": "\\textglotstop{}", "ɱ": "\\textltailm{}",
+  "ɳ": "\\textrtailn{}", "ɲ": "\\textltailn{}", "ŋ": "\\texteng{}", "ɴ": "\\textscn{}",
+  "ʙ": "\\textscb{}", "ʀ": "\\textscr{}", "ⱱ": "\\textvibyi{}", "ɾ": "\\textfishhookr{}",
+  "ɽ": "\\textrtailr{}", "ɸ": "\\textphi{}", "β": "\\textbeta{}", "θ": "\\texttheta{}",
+  "ð": "\\texteth{}", "ʃ": "\\textesh{}", "ʒ": "\\textyogh{}", "ʂ": "\\textrtails{}",
+  "ʐ": "\\textrtailz{}", "ç": "\\c{c}", "ʝ": "\\textctj{}", "ɣ": "\\textgamma{}",
+  "χ": "\\textchi{}", "ʁ": "\\textinvscr{}", "ħ": "\\textcrh{}", "ʕ": "\\textrevglotstop{}",
+  "ɦ": "\\texthth{}", "ɬ": "\\textbeltl{}", "ɮ": "\\textlyoghlig{}", "ʋ": "\\textscriptv{}",
+  "ɹ": "\\textturnr{}", "ɻ": "\\textturnrrtail{}", "ɰ": "\\textturnm{}", "ɭ": "\\textrtaill{}",
+  "ʎ": "\\textturny{}", "ʟ": "\\textscl{}", "ʍ": "\\textturnw{}", "ɥ": "\\texththeng{}",
+  "ɕ": "\\textctc{}", "ʑ": "\\textctz{}", "ɧ": "\\texththeng{}",
+  "ʘ": "\\textbullseye{}", "ǀ": "\\textpipe{}", "ǃ": "\\textbang{}", "ǂ": "\\textdoublebarpipe{}",
+  "ǁ": "\\textdoublevertline{}", "ɓ": "\\texthtb{}", "ɗ": "\\texthtd{}", "ʄ": "\\texthtbardotlessj{}",
+  "ɠ": "\\texthtg{}", "ʛ": "\\texthtscg{}", "ʼ": "'",
+  "ɨ": "\\textbari{}", "ʉ": "\\textbaru{}", "ɯ": "\\textturnm{}", "ɪ": "\\textsci{}",
+  "ʏ": "\\textscy{}", "ʊ": "\\textupsilon{}", "ø": "\\o{}", "ɘ": "\\textreve{}",
+  "ɵ": "\\textbaro{}", "ɤ": "\\textramshorns{}", "ə": "\\textschwa{}", "ɛ": "\\textepsilon{}",
+  "œ": "\\oe{}", "ɜ": "\\textrevepsilon{}", "ɞ": "\\textcloserevepsilon{}", "ʌ": "\\textturnv{}",
+  "ɔ": "\\textopeno{}", "æ": "\\ae{}", "ɐ": "\\textturna{}", "ɶ": "\\textscoelig{}",
+  "ɑ": "\\textscripta{}", "ɒ": "\\textturnscripta{}", "ˈ": "\\textprimstress{}",
+  "ˌ": "\\textsecstress{}", "ː": "\\textlengthmark{}", "ˑ": "\\texthalflength{}",
+  "|": "\\textvertline{}", "‖": "\\textdoublevertline{}", "‿": "\\textbottomtiebar{}",
+  "˥": "\\tone{55}", "˦": "\\tone{44}", "˧": "\\tone{33}", "˨": "\\tone{22}", "˩": "\\tone{11}",
+  "ꜛ": "\\textupstep{}", "ꜜ": "\\textdownstep{}", "↗": "\\textglobrise{}", "↘": "\\textglobfall{}",
+};
+
 const STORAGE_KEY = "spe-rule-builder-state-v1";
 
 function createId(): string {
@@ -351,6 +442,149 @@ function formatRuleText(rule: RuleState): string {
   return `${formatSlotText("X", rule.X)} → ${formatSlotText("Y", rule.Y)} / ${formatSlotText("A", rule.A)} __ ${formatSlotText("B", rule.B)}`;
 }
 
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function copyComputedStyles(source: Element, target: Element) {
+  if (source instanceof HTMLElement && target instanceof HTMLElement) {
+    const computed = window.getComputedStyle(source);
+    target.style.cssText = Array.from(computed)
+      .map((property) => `${property}:${computed.getPropertyValue(property)};`)
+      .join("");
+  }
+
+  Array.from(source.children).forEach((child, index) => {
+    const targetChild = target.children.item(index);
+    if (targetChild) copyComputedStyles(child, targetChild);
+  });
+}
+
+function latexEscapeText(value: string): string {
+  return value
+    .replace(/\\/g, "\\textbackslash{}")
+    .replace(/([#$%&_{}])/g, "\\$1")
+    .replace(/~/g, "\\textasciitilde{}")
+    .replace(/\^/g, "\\textasciicircum{}");
+}
+
+function tipaBaseSymbol(symbol: string): string {
+  if (TIPA_SYMBOLS[symbol]) return TIPA_SYMBOLS[symbol];
+  if (/^[A-Za-z0-9.,!?;:'-]$/.test(symbol)) return latexEscapeText(symbol);
+  return "?";
+}
+
+function tipaSymbol(symbol: string): string {
+  if (symbol.includes("͡")) {
+    const parts = symbol.split("͡");
+    if (parts.length === 2) {
+      return `\\texttoptiebar{${tipaBaseSymbol(parts[0])}${tipaBaseSymbol(parts[1])}}`;
+    }
+  }
+
+  const characters = Array.from(symbol);
+  const base = characters.shift();
+  if (!base) return "";
+  let output = tipaBaseSymbol(base);
+
+  for (const mark of characters) {
+    if (mark === "ʰ") output += "\\textsuperscript{h}";
+    else if (mark === "ʷ") output += "\\textsuperscript{w}";
+    else if (mark === "ʲ") output += "\\textsuperscript{j}";
+    else if (mark === "ˠ") output += "\\textsuperscript{\\textgamma}";
+    else if (mark === "ˤ") output += "\\textsuperscript{\\textrevglotstop}";
+    else if (mark === "ⁿ") output += "\\textsuperscript{n}";
+    else if (mark === "ˡ") output += "\\textsuperscript{l}";
+    else if (mark === "˞") output += "\\textrhoticity{}";
+    else if (mark === "̚") output += "\\textcorner{}";
+    else if (mark === "̃") output = `\\textsuperimposetilde{${output}}`;
+    else if (mark === "̩") output = `\\textsyllabic{${output}}`;
+    else output += `% Unsupported diacritic: ${mark}`;
+  }
+
+  return output;
+}
+
+function latexMatrix(matrix: MatrixToken): string {
+  const latexValue = (value: FeatureValue) => {
+    if (value === "α") return "\\alpha";
+    if (value === "-α") return "-\\alpha";
+    return value;
+  };
+  const rows = [
+    ...matrix.nodes,
+    ...Object.entries(matrix.features).map(([name, value]) => `${latexValue(value)}${latexEscapeText(name)}`),
+  ];
+  return `\\phonfeat[l]{${rows.length ? rows.join(" \\\\") : "\\mbox{}"}}`;
+}
+
+function latexBoundary(token: BoundaryToken): string {
+  const map: Record<string, string> = {
+    "#": "\\#", "+": "+", ".": ".", "$": "\\$", "σ": "\\sigma",
+    "ω": "\\omega", "μ": "\\mu", "∅": "\\varnothing", C: "C", V: "V",
+  };
+  return map[token.value] ?? latexEscapeText(token.value);
+}
+
+function latexSlot(slot: RuleSlot, tokens: RuleToken[]): string {
+  if (tokens.length === 0) return "\\varnothing";
+  const parts: string[] = [];
+  let symbols: SymbolToken[] = [];
+
+  const flush = () => {
+    if (!symbols.length) return;
+    const body = symbols.map((token) => tipaSymbol(token.symbol)).join(", ");
+    if (slot === "X") parts.push(`/\\textipa{${body}}/`);
+    else if (slot === "Y") parts.push(`[\\textipa{${body}}]`);
+    else parts.push(`\\textipa{${body}}`);
+    symbols = [];
+  };
+
+  for (const token of tokens) {
+    if (token.kind === "symbol") symbols.push(token);
+    else {
+      flush();
+      parts.push(token.kind === "matrix" ? latexMatrix(token) : latexBoundary(token));
+    }
+  }
+  flush();
+  return parts.join(" ");
+}
+
+function buildLatexDocument(rule: RuleState): string {
+  const input = latexSlot("X", rule.X);
+  const output = latexSlot("Y", rule.Y);
+  const hasLeft = rule.A.length > 0;
+  const hasRight = rule.B.length > 0;
+  let command: string;
+
+  if (hasLeft && hasRight) command = `\\phonb{${input}}{${output}}{${latexSlot("A", rule.A)}}{${latexSlot("B", rule.B)}}`;
+  else if (hasLeft) command = `\\phonl{${input}}{${output}}{${latexSlot("A", rule.A)}}`;
+  else if (hasRight) command = `\\phonr{${input}}{${output}}{${latexSlot("B", rule.B)}}`;
+  else command = `\\phon{${input}}{${output}}`;
+
+  return `\\documentclass{article}
+\\usepackage[T1]{fontenc}
+\\usepackage[tone,extra]{tipa}
+\\usepackage{phonrule}
+\\pagestyle{empty}
+
+\\begin{document}
+\\begin{center}
+${command}
+\\end{center}
+\\end{document}
+`;
+}
+
 function App() {
   const [rule, setRule] = useState<RuleState>(() => loadSavedRule());
   const [pastRules, setPastRules] = useState<RuleState[]>([]);
@@ -361,6 +595,7 @@ function App() {
   const [customSymbol, setCustomSymbol] = useState("");
   const [customFeature, setCustomFeature] = useState("");
   const [status, setStatus] = useState("");
+  const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(rule));
@@ -582,6 +817,61 @@ function App() {
     }
   }
 
+
+  async function exportPng() {
+    const source = previewRef.current;
+    if (!source) return;
+
+    try {
+      const clone = source.cloneNode(true) as HTMLDivElement;
+      copyComputedStyles(source, clone);
+      clone.style.width = `${Math.max(source.scrollWidth, source.clientWidth)}px`;
+      clone.style.height = `${Math.max(source.scrollHeight, source.clientHeight)}px`;
+      clone.style.overflow = "visible";
+      clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+
+      const width = Math.ceil(Math.max(source.scrollWidth, source.clientWidth));
+      const height = Math.ceil(Math.max(source.scrollHeight, source.clientHeight));
+      const serialized = new XMLSerializer().serializeToString(clone);
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><foreignObject width="100%" height="100%">${serialized}</foreignObject></svg>`;
+      const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+      const svgUrl = URL.createObjectURL(svgBlob);
+      const image = new Image();
+
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("The rule preview could not be rendered."));
+        image.src = svgUrl;
+      });
+
+      const scale = 2;
+      const canvas = document.createElement("canvas");
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Canvas is unavailable.");
+      context.scale(scale, scale);
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      URL.revokeObjectURL(svgUrl);
+
+      const pngBlob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("PNG creation failed.")), "image/png");
+      });
+      downloadBlob(pngBlob, "spe-phonological-rule.png");
+      setStatus("PNG exported.");
+    } catch {
+      setStatus("PNG export failed in this browser.");
+    }
+  }
+
+  function exportLatex() {
+    const documentText = buildLatexDocument(rule);
+    downloadBlob(new Blob([documentText], { type: "text/x-tex;charset=utf-8" }), "spe-phonological-rule.tex");
+    setStatus("LaTeX file exported.");
+  }
+
   function selectSlot(slot: RuleSlot) {
     setActiveSlot(slot);
     setSelectedMatrixId(null);
@@ -611,33 +901,32 @@ function App() {
 
   function renderPreviewMatrix(matrix: MatrixToken) {
     const rows = [
-      ...matrix.nodes.map((node) => ({
-        key: `node-${node}`,
-        text: node,
-      })),
-      ...Object.entries(matrix.features).map(([name, value]) => ({
-        key: `feature-${name}`,
-        text: `${value}${name}`,
-      })),
+      ...matrix.nodes.map((node) => ({ key: `node-${node}`, text: node })),
+      ...Object.entries(matrix.features).map(([name, value]) => ({ key: `feature-${name}`, text: `${value}${name}` })),
     ];
+    const visibleRows = rows.length || 1;
+
+    const bracket = (side: "left" | "right") => (
+      <span className={`preview-matrix-bracket ${side}`} aria-hidden="true">
+        <span>{side === "left" ? "⎡" : "⎤"}</span>
+        {Array.from({ length: Math.max(0, visibleRows - 2) }, (_, index) => (
+          <span key={index}>{side === "left" ? "⎢" : "⎥"}</span>
+        ))}
+        {visibleRows > 1 && <span>{side === "left" ? "⎣" : "⎦"}</span>}
+      </span>
+    );
 
     return (
-      <span
-        className="preview-feature-matrix"
-        key={matrix.id}
-        aria-label={formatMatrixText(matrix)}
-      >
-        {rows.length === 0 ? (
-          <span className="preview-matrix-empty">empty matrix</span>
-        ) : (
-          <span className="preview-matrix-rows">
-            {rows.map((row) => (
-              <span className="preview-matrix-row" key={row.key}>
-                {row.text}
-              </span>
-            ))}
-          </span>
-        )}
+      <span className="preview-feature-matrix" key={matrix.id} aria-label={formatMatrixText(matrix)}>
+        {bracket("left")}
+        <span className="preview-matrix-rows">
+          {rows.length === 0 ? (
+            <span className="preview-matrix-empty">empty</span>
+          ) : rows.map((row) => (
+            <span className="preview-matrix-row" key={row.key}>{row.text}</span>
+          ))}
+        </span>
+        {bracket("right")}
       </span>
     );
   }
@@ -701,6 +990,110 @@ function App() {
 
     flushSymbolGroup();
     return <span className="preview-slot-content">{content}</span>;
+  }
+
+
+  function ipaButton(symbol: string, keyPrefix = "chart") {
+    const item = IPA_ITEMS.find((candidate) => candidate.symbol === symbol);
+    if (!item) return null;
+    return (
+      <button
+        type="button"
+        className="symbol-button chart-symbol-button"
+        title={item.name}
+        onClick={() => addIpaItem(item)}
+        key={`${keyPrefix}-${item.symbol}-${item.name}`}
+      >
+        {item.symbol}
+      </button>
+    );
+  }
+
+  function renderPulmonicChart() {
+    return (
+      <section className="group ipa-chart-section">
+        <h3>Pulmonic consonants</h3>
+        <p className="chart-key">Where a cell has two symbols, the left symbol is voiceless and the right symbol is voiced.</p>
+        <div className="ipa-chart-scroll">
+          <div className="consonant-chart" role="table" aria-label="IPA pulmonic consonant chart">
+            <div className="chart-corner" />
+            {PULMONIC_PLACES.map((place) => <div className="chart-column-heading" key={place}>{place}</div>)}
+            {PULMONIC_ROWS.map((manner) => (
+              <div className="consonant-chart-row" key={manner}>
+                <div className="chart-row-heading">{manner}</div>
+                {PULMONIC_PLACES.map((place) => {
+                  const symbols = PULMONIC_CHART[manner]?.[place] ?? [];
+                  return (
+                    <div className={`chart-cell ${symbols.length === 0 ? "empty-chart-cell" : ""}`} key={`${manner}-${place}`}>
+                      {symbols.map((symbol) => ipaButton(symbol, `${manner}-${place}`))}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  function renderVowelChart() {
+    return (
+      <section className="group ipa-chart-section">
+        <h3>Vowels</h3>
+        <p className="chart-key">Within a pair, the left vowel is unrounded and the right vowel is rounded.</p>
+        <div className="vowel-chart" role="table" aria-label="IPA vowel chart">
+          <div className="chart-corner" />
+          <div className="vowel-column-heading">Front</div>
+          <div className="vowel-column-heading">Central</div>
+          <div className="vowel-column-heading">Back</div>
+          {VOWEL_POSITIONS.map((row) => (
+            <div className="vowel-chart-row" key={row.height}>
+              <div className="chart-row-heading">{row.height}</div>
+              {([row.front, row.central, row.back] as readonly (readonly string[])[]).map((symbols, index) => (
+                <div className={`vowel-cell vowel-column-${index} ${symbols.length === 0 ? "empty-chart-cell" : ""}`} key={`${row.height}-${index}`}>
+                  {symbols.map((symbol) => ipaButton(symbol, `${row.height}-${index}`))}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  function renderFlatIpaGroups(groups: Record<string, IpaItem[]>) {
+    return Object.entries(groups).map(([group, items]) => (
+      <section className="group" key={group}>
+        <h3>{group}</h3>
+        <div className="symbol-grid">
+          {items.map((item) => (
+            <button type="button" className="symbol-button" title={item.name} onClick={() => addIpaItem(item)} key={`${group}-${item.symbol}-${item.name}`}>
+              {item.symbol}
+            </button>
+          ))}
+        </div>
+      </section>
+    ));
+  }
+
+  function renderIpaPicker() {
+    if (search.trim()) return renderFlatIpaGroups(filteredIpaGroups);
+
+    const supplementaryGroups = IPA_ITEMS
+      .filter((item) => item.group !== "Pulmonic consonants" && item.group !== "Vowels")
+      .reduce<Record<string, IpaItem[]>>((groups, item) => {
+        (groups[item.group] ??= []).push(item);
+        return groups;
+      }, {});
+
+    return (
+      <>
+        {renderPulmonicChart()}
+        {renderVowelChart()}
+        {renderFlatIpaGroups(supplementaryGroups)}
+      </>
+    );
   }
 
   function renderRuleToken(slot: RuleSlot, token: RuleToken, index: number) {
@@ -769,6 +1162,8 @@ function App() {
           <div className="toolbar">
             <button type="button" onClick={undo} disabled={pastRules.length === 0}>Undo</button>
             <button type="button" onClick={clearAll}>Clear rule</button>
+            <button type="button" onClick={exportPng}>Export PNG</button>
+            <button type="button" onClick={exportLatex}>Export LaTeX</button>
             <button type="button" className="primary-button" onClick={copyRule}>Copy rule</button>
           </div>
         </header>
@@ -779,7 +1174,7 @@ function App() {
             <span className="status" aria-live="polite">{status}</span>
           </div>
 
-          <div className="plain-preview" aria-label={ruleText}>
+          <div className="plain-preview" aria-label={ruleText} ref={previewRef}>
             {renderPreviewSlot("X")}
             <span className="preview-operator">→</span>
             {renderPreviewSlot("Y")}
@@ -847,18 +1242,7 @@ function App() {
 
               {activeTab === "ipa" && (
                 <>
-                  {Object.entries(filteredIpaGroups).map(([group, items]) => (
-                    <section className="group" key={group}>
-                      <h3>{group}</h3>
-                      <div className="symbol-grid">
-                        {items.map((item) => (
-                          <button type="button" className="symbol-button" title={item.name} onClick={() => addIpaItem(item)} key={`${group}-${item.symbol}-${item.name}`}>
-                            {item.symbol}
-                          </button>
-                        ))}
-                      </div>
-                    </section>
-                  ))}
+                  {renderIpaPicker()}
 
                   {Object.keys(filteredIpaGroups).length === 0 && <p>No matching IPA symbols were found.</p>}
 
