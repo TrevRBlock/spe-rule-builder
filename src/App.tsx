@@ -76,6 +76,8 @@ const VARIABLE_FEATURE_VALUES: VariableFeatureValue[] = [
   "-γ",
 ];
 
+const MATRIX_CATEGORY_LABELS = ["C", "V", "N", "S"] as const;
+
 const BASIC_FEATURE_NAMES = new Set<string>([
   "syllabic",
   "consonantal",
@@ -279,6 +281,16 @@ const IPA_ITEMS: IpaItem[] = [
   { symbol: "↗", name: "global rise", group: "Tone" },
   { symbol: "↘", name: "global fall", group: "Tone" },
 ];
+
+const ATTACHING_IPA_SYMBOLS = new Set(
+  IPA_ITEMS
+    .filter((item) =>
+      item.group === "Diacritics" ||
+      item.group === "Suprasegmentals" ||
+      item.group === "Tone",
+    )
+    .map((item) => item.symbol),
+);
 
 const FEATURES: FeatureDefinition[] = [
   // Feature inventories differ across theories. These entries are intentionally independent:
@@ -573,6 +585,24 @@ function isStandaloneCombiningMark(text: string): boolean {
   return /^[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]+$/u.test(text);
 }
 
+function isAttachingIpaSymbol(symbol: string): boolean {
+  return ATTACHING_IPA_SYMBOLS.has(symbol) || isStandaloneCombiningMark(symbol);
+}
+
+function groupedSymbolStrings(tokens: SymbolToken[]): string[] {
+  const groups: string[] = [];
+
+  for (const token of tokens) {
+    if (isAttachingIpaSymbol(token.symbol) && groups.length > 0) {
+      groups[groups.length - 1] += token.symbol;
+    } else {
+      groups.push(token.symbol);
+    }
+  }
+
+  return groups;
+}
+
 function matrixRows(matrix: MatrixToken): string[] {
   return [
     ...matrix.nodes,
@@ -606,25 +636,58 @@ function parseMatrixText(value: string): Pick<MatrixToken, "nodes" | "features">
   return { nodes, features };
 }
 
-function parseTypedFeatureInput(value: string): Record<string, FeatureValue> | null {
-  const normalized = value.trim().replace(/−/gu, "-");
-  if (!/^[+-]/u.test(normalized)) return null;
+function parseTypedMatrixInput(
+  value: string,
+): Pick<MatrixToken, "nodes" | "features"> | null {
+  let remaining = value.trim().replace(/−/gu, "-");
+  const nodeAlternation = UNARY_PLACE_FEATURES.join("|");
+  const startsLikeMatrix = new RegExp(String.raw`^(?:[+-]|(?:${nodeAlternation})\b)`, "iu");
 
+  if (!startsLikeMatrix.test(remaining)) return null;
+
+  const nodes: string[] = [];
   const features: Record<string, FeatureValue> = {};
-  const chunks = normalized.split(/\s*,\s*|\s+(?=[+-]\s*\S)/u);
+  const nodeAtStart = new RegExp(String.raw`^(${nodeAlternation})\b`, "iu");
+  const nextItem = new RegExp(
+    String.raw`(?:\s*[,;]\s*|\r?\n|\s+(?=[+-]\s*\S)|\s+(?=(?:${nodeAlternation})\b))`,
+    "iu",
+  );
 
-  for (const rawChunk of chunks) {
-    const chunk = rawChunk.trim();
-    if (!chunk) continue;
+  while (remaining.trim()) {
+    remaining = remaining.trim().replace(/^[,;]+/u, "").trim();
+    if (!remaining) break;
 
-    const match = chunk.match(/^([+-])\s*(.+)$/u);
-    if (!match) continue;
+    const nodeMatch = remaining.match(nodeAtStart);
+    if (nodeMatch) {
+      const canonicalNode = UNARY_PLACE_FEATURES.find(
+        (node) => node === nodeMatch[1].toUpperCase(),
+      );
 
-    const name = match[2].trim();
-    if (name) features[name] = match[1] as FeatureValue;
+      if (!canonicalNode) return null;
+      if (!nodes.includes(canonicalNode)) nodes.push(canonicalNode);
+      remaining = remaining.slice(nodeMatch[0].length);
+      continue;
+    }
+
+    const signMatch = remaining.match(/^([+-])\s*/u);
+    if (!signMatch) return null;
+
+    const sign = signMatch[1] as FeatureValue;
+    remaining = remaining.slice(signMatch[0].length);
+
+    const boundaryIndex = remaining.search(nextItem);
+    const featureName = (
+      boundaryIndex === -1 ? remaining : remaining.slice(0, boundaryIndex)
+    ).trim();
+
+    if (!featureName) return null;
+    features[featureName] = sign;
+    remaining = boundaryIndex === -1 ? "" : remaining.slice(boundaryIndex);
   }
 
-  return Object.keys(features).length > 0 ? features : null;
+  return nodes.length > 0 || Object.keys(features).length > 0
+    ? { nodes, features }
+    : null;
 }
 
 function formatMatrixText(matrix: MatrixToken): string {
@@ -642,24 +705,27 @@ function formatTokenText(token: RuleToken): string {
 function formatSlotText(slot: RuleSlot, tokens: RuleToken[]): string {
   if (tokens.length === 0) return "";
 
-  if (slot !== "X" && slot !== "Y") {
-    return tokens.map(formatTokenText).join(" ");
-  }
-
   const parts: string[] = [];
-  let symbolGroup: string[] = [];
+  let symbolGroup: SymbolToken[] = [];
 
   const flushSymbols = () => {
     if (symbolGroup.length === 0) return;
-    const opening = slot === "X" ? "/" : "[";
-    const closing = slot === "X" ? "/" : "]";
-    parts.push(`${opening}${symbolGroup.join(", ")}${closing}`);
+
+    const groupedSymbols = groupedSymbolStrings(symbolGroup);
+    if (slot === "X" || slot === "Y") {
+      const opening = slot === "X" ? "/" : "[";
+      const closing = slot === "X" ? "/" : "]";
+      parts.push(`${opening}${groupedSymbols.join(", ")}${closing}`);
+    } else {
+      parts.push(groupedSymbols.join(" "));
+    }
+
     symbolGroup = [];
   };
 
   for (const token of tokens) {
     if (token.kind === "symbol") {
-      symbolGroup.push(token.symbol);
+      symbolGroup.push(token);
       continue;
     }
 
@@ -777,7 +843,7 @@ function latexSlot(slot: RuleSlot, tokens: RuleToken[]): string {
 
   const flush = () => {
     if (!symbols.length) return;
-    const body = symbols.map((token) => tipaSymbol(token.symbol)).join(", ");
+    const body = groupedSymbolStrings(symbols).map((symbol) => tipaSymbol(symbol)).join(", ");
     if (slot === "X") parts.push(`/\\textipa{${body}}/`);
     else if (slot === "Y") parts.push(`[\\textipa{${body}}]`);
     else parts.push(`\\textipa{${body}}`);
@@ -895,7 +961,7 @@ function App() {
     const activeTokens = rule[activeSlot];
     const lastToken = activeTokens.at(-1);
 
-    if ((item.group === "Diacritics" || isStandaloneCombiningMark(item.symbol)) && lastToken?.kind === "symbol") {
+    if (isAttachingIpaSymbol(item.symbol) && lastToken?.kind === "symbol") {
       commitRule((previous) => ({
         ...previous,
         [activeSlot]: previous[activeSlot].map((token) =>
@@ -927,8 +993,8 @@ function App() {
       value = value.slice(1, -1).trim();
     }
 
-    const typedFeatures = parseTypedFeatureInput(value);
-    if (typedFeatures) {
+    const typedMatrix = parseTypedMatrixInput(value);
+    if (typedMatrix) {
       const existingMatrixId = findTargetMatrixIdForSlot(slot);
       const targetMatrixId = existingMatrixId ?? createId();
 
@@ -940,7 +1006,8 @@ function App() {
               token.id === existingMatrixId && token.kind === "matrix"
                 ? {
                     ...token,
-                    features: { ...token.features, ...typedFeatures },
+                    nodes: Array.from(new Set([...token.nodes, ...typedMatrix.nodes])),
+                    features: { ...token.features, ...typedMatrix.features },
                   }
                 : token,
             ),
@@ -951,8 +1018,8 @@ function App() {
           id: targetMatrixId,
           kind: "matrix",
           label: "",
-          features: typedFeatures,
-          nodes: [],
+          features: typedMatrix.features,
+          nodes: typedMatrix.nodes,
         };
 
         return {
@@ -1256,7 +1323,10 @@ function App() {
 
       const flushSymbols = () => {
         if (symbolGroup.length === 0) return;
-        const body = symbolGroup.map((token) => token.symbol).join(", ");
+        const groupedSymbols = groupedSymbolStrings(symbolGroup);
+        const body = (slot === "X" || slot === "Y")
+          ? groupedSymbols.join(", ")
+          : groupedSymbols.join(" ");
 
         if (slot === "X") pieces.push({ kind: "text", text: `/${body}/` });
         else if (slot === "Y") pieces.push({ kind: "text", text: `[${body}]` });
@@ -1458,6 +1528,26 @@ function App() {
   function renderMatrix(slot: RuleSlot, matrix: MatrixToken) {
     return (
       <div className="matrix-editor-stack" aria-label={formatMatrixText(matrix)}>
+        <div
+          className="matrix-inline-category-row"
+          onClick={(event: MouseEvent<HTMLDivElement>) => event.stopPropagation()}
+        >
+          {MATRIX_CATEGORY_LABELS.map((label) => (
+            <button
+              type="button"
+              className={`matrix-inline-category-button ${matrix.label === label ? "selected" : ""}`}
+              onClick={() => {
+                setActiveSlot(slot);
+                setSelectedMatrixId(matrix.id);
+                updateMatrixLabel(slot, matrix.id, matrix.label === label ? "" : label);
+              }}
+              aria-label={`Set matrix category to ${label}`}
+              key={`${matrix.id}-inline-label-${label}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <input
           className="matrix-label-input"
           defaultValue={matrix.label}
@@ -1471,7 +1561,7 @@ function App() {
           onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
             if (event.key === "Enter") event.currentTarget.blur();
           }}
-          placeholder="C / V / N / S"
+          placeholder="Custom category"
           aria-label="Matrix category label"
         />
         <div className="matrix-editor-visual">
@@ -1548,7 +1638,7 @@ function App() {
       if (slot === "X" || slot === "Y") {
         const opening = slot === "X" ? "/" : "[";
         const closing = slot === "X" ? "/" : "]";
-        const text = symbolGroup.map((token) => token.symbol).join(", ");
+        const text = groupedSymbolStrings(symbolGroup).join(", ");
 
         content.push(
           <span className="preview-symbol-group" key={`${slot}-symbols-${groupNumber}`}>
@@ -1556,13 +1646,13 @@ function App() {
           </span>,
         );
       } else {
-        for (const token of symbolGroup) {
+        groupedSymbolStrings(symbolGroup).forEach((symbol, index) => {
           content.push(
-            <span className="preview-symbol" key={token.id}>
-              {token.symbol}
+            <span className="preview-symbol" key={`${slot}-symbol-${groupNumber}-${index}`}>
+              {symbol}
             </span>,
           );
-        }
+        });
       }
 
       symbolGroup = [];
@@ -2118,7 +2208,7 @@ function App() {
                 <div className="boundary-grid">
                   {BOUNDARIES.map((boundary) => (
                     <button type="button" className="boundary-button" onClick={() => addBoundary(boundary.value, boundary.name)} key={`${boundary.value}-${boundary.name}`}>
-                      <span className="boundary-symbol">{boundary.value || "blank"}</span>
+                      <span className="boundary-symbol" aria-label={boundary.value || "blank position"}>{boundary.value || " "}</span>
                       <span className="boundary-name">{boundary.name}</span>
                     </button>
                   ))}
