@@ -51,6 +51,8 @@ const SLOT_LABELS: Record<RuleSlot, string> = {
   B: "Right context (B)",
 };
 
+const SLOT_ORDER: RuleSlot[] = ["X", "Y", "A", "B"];
+
 const EMPTY_RULE: RuleState = {
   X: [],
   Y: [],
@@ -981,6 +983,23 @@ function App() {
     if (!value) return;
     addToken({ id: createId(), kind: "symbol", symbol: value, name: "custom IPA or phonological symbol" });
     setCustomSymbol("");
+  }
+
+  function focusAdjacentSlotEntry(slot: RuleSlot, direction: 1 | -1 = 1) {
+    const currentIndex = SLOT_ORDER.indexOf(slot);
+    const nextIndex = (currentIndex + direction + SLOT_ORDER.length) % SLOT_ORDER.length;
+    const nextSlot = SLOT_ORDER[nextIndex];
+
+    setActiveSlot(nextSlot);
+    setSelectedMatrixId(null);
+
+    window.requestAnimationFrame(() => {
+      const nextInput = document.querySelector<HTMLInputElement>(
+        `[data-slot-entry="${nextSlot}"]`,
+      );
+      nextInput?.focus();
+      nextInput?.select();
+    });
   }
 
   function addTypedSlotContent(slot: RuleSlot) {
@@ -1916,15 +1935,26 @@ function App() {
         </div>
         <div className="slot-direct-entry" onClick={(event: MouseEvent<HTMLDivElement>) => event.stopPropagation()}>
           <input
+            data-slot-entry={slot}
             value={slotDrafts[slot]}
             onChange={(event: ChangeEvent<HTMLInputElement>) =>
               setSlotDrafts((previous) => ({ ...previous, [slot]: event.target.value }))
             }
             onFocus={() => setActiveSlot(slot)}
             onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
-              if (event.key === "Enter") addTypedSlotContent(slot);
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addTypedSlotContent(slot);
+                return;
+              }
+
+              if (event.key === "Tab") {
+                event.preventDefault();
+                addTypedSlotContent(slot);
+                focusAdjacentSlotEntry(slot, event.shiftKey ? -1 : 1);
+              }
             }}
-            placeholder="Type IPA or notation; press Enter"
+            placeholder="Type IPA or notation; Enter adds, Tab adds and moves on"
             aria-label={`Type directly into ${SLOT_LABELS[slot]}`}
           />
           <button
